@@ -29,6 +29,23 @@ describe Resque::Plugins::RestrictionJob do
     end
   end
   
+  context "#restriction_queue_name" do
+    it "adds restriction to class without source_queue" do
+      OneHourRestrictionJob.source_queue.should == nil
+      OneHourRestrictionJob.restriction_queue_name.should == "restriction_normal"
+    end
+
+    it "adds restriction to class with source_queue" do
+      OneHourRestrictionJob.source_queue = "foobar"
+      OneHourRestrictionJob.restriction_queue_name.should == "restriction_foobar"
+    end
+
+    it "does not add restriction to class with already restricted source_queue" do
+      OneHourRestrictionJob.source_queue = "restriction_foobar"
+      OneHourRestrictionJob.restriction_queue_name.should == "restriction_foobar"
+    end
+
+  end
   context "resque" do
     include PerformJob
 
@@ -122,5 +139,6 @@ describe Resque::Plugins::RestrictionJob do
       end
 
     end
+
   end
 end

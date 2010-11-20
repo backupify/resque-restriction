@@ -15,6 +15,14 @@ module Resque
         @options ||= {}
       end
 
+      def source_queue=(queue_name)
+        @source_queue = queue_name
+      end
+
+      def source_queue
+        @source_queue
+      end
+
       def restrict(options={})
         settings.merge!(options)
       end
@@ -74,8 +82,9 @@ module Resque
       end
 
       def restriction_queue_name
-        queue_name = Resque.queue_from_class(self)
-        "#{RESTRICTION_QUEUE_PREFIX}_#{queue_name}"
+        queue_name = source_queue || Resque.queue_from_class(self)
+        queue_name = "#{RESTRICTION_QUEUE_PREFIX}_#{queue_name}" if queue_name !~ /^#{Plugins::Restriction::RESTRICTION_QUEUE_PREFIX}/
+        return queue_name
       end
 
       def seconds(period)

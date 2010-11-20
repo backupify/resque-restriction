@@ -107,3 +107,10 @@ class MultiCallRestrictionJob < Resque::Plugins::RestrictionJob
   def self.perform(args)
   end
 end
+
+class UnrestrictedJob
+  @queue = 'normal'
+
+  def self.perform(args)
+  end
+end
