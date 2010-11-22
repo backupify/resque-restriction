@@ -43,7 +43,7 @@ Resque.redis = 'localhost:9736'
 #
 module PerformJob
   def perform_job(klass, *args)
-    resque_job = Resque::Job.new(:testqueue, 'class' => klass, 'args' => args)
+    resque_job = Resque::Job.new(Resque.queue_from_class(klass), 'class' => klass, 'args' => args)
     resque_job.perform
   end
 end
@@ -108,9 +108,19 @@ class MultiCallRestrictionJob < Resque::Plugins::RestrictionJob
   end
 end
 
+class CheckSourceQueueJob < Resque::Plugins::RestrictionJob
+  restrict :per_hour => 10
+
+  @queue = 'normal'
+
+  def self.perform(*args)
+    Resque.redis.set("source_queue", source_queue)
+  end
+end
+
 class UnrestrictedJob
   @queue = 'normal'
 
-  def self.perform(args)
+  def self.perform(*args)
   end
 end

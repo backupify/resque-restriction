@@ -14,8 +14,7 @@ module Resque
             # and return
             payload = Resque.pop(queue)
             if payload
-              set_source_queue(payload, queue)
-              if ! constantize(payload['class']).repush(*payload['args'])
+              if ! constantize(payload['class']).repush(queue, *payload['args'])
                 return new(queue, payload)
               end
             end
@@ -23,21 +22,22 @@ module Resque
           return nil
         else
           # drop through to original Job::Reserve if not restriction queue
-          job = origin_reserve(queue)
-          set_source_queue(job.payload, job.queue) if job
-          return job
+          origin_reserve(queue)
         end
       end
 
+    end
+
+    alias_method :origin_perform, :perform
+
+    def perform
       # This lets job classes that use resque-restriction know what queue the job
       # was taken off of, so that it can be pushed to a restriction variant of that
-      # queue when restricted.  Fixes the problem where a job gets queued to a queue
-      # that is not the same as the one declared in the class 
-      def set_source_queue(payload, queue)
-        klazz = constantize(payload['class'])
-        klazz.source_queue = queue if klazz.respond_to? :source_queue=
-      end
-
+      # queue when restricted.  Fixes the problem where a job needs to be queued to a queue
+      # that is not the same as the one declared in the class
+      payload_class.source_queue = queue if payload_class.respond_to?(:source_queue=)
+      origin_perform
     end
+
   end
 end

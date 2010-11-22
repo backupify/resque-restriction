@@ -31,18 +31,15 @@ describe Resque::Plugins::RestrictionJob do
   
   context "#restriction_queue_name" do
     it "adds restriction to class without source_queue" do
-      OneHourRestrictionJob.source_queue.should == nil
-      OneHourRestrictionJob.restriction_queue_name.should == "restriction_normal"
+      OneHourRestrictionJob.restriction_queue_name(nil).should == "restriction_normal"
     end
 
     it "adds restriction to class with source_queue" do
-      OneHourRestrictionJob.source_queue = "foobar"
-      OneHourRestrictionJob.restriction_queue_name.should == "restriction_foobar"
+      OneHourRestrictionJob.restriction_queue_name("foobar").should == "restriction_foobar"
     end
 
     it "does not add restriction to class with already restricted source_queue" do
-      OneHourRestrictionJob.source_queue = "restriction_foobar"
-      OneHourRestrictionJob.restriction_queue_name.should == "restriction_foobar"
+      OneHourRestrictionJob.restriction_queue_name("restriction_foobar").should == "restriction_foobar"
     end
 
   end
@@ -129,13 +126,13 @@ describe Resque::Plugins::RestrictionJob do
       it "should push restricted jobs onto restriction queue" do
         Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), -1)
         Resque.should_receive(:push).once.with('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
-        OneHourRestrictionJob.repush('any args').should be_true
+        OneHourRestrictionJob.repush('restriction_normal', 'any args').should be_true
       end
 
       it "should not push unrestricted jobs onto restriction queue" do
         Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 1)
         Resque.should_not_receive(:push)
-        OneHourRestrictionJob.repush('any args').should be_false
+        OneHourRestrictionJob.repush('normal', 'any args').should be_false
       end
 
     end

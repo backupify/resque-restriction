@@ -1,4 +1,4 @@
-require File.join(File.dirname(__FILE__) + '/../spec_helper')
+require File.expand_path('../../spec_helper', __FILE__)
 
 describe Resque::Job do
   before(:each) do
@@ -35,30 +35,20 @@ describe Resque::Job do
     Resque::Job.reserve('restriction_normal')
   end
 
-  it "should set queue on restricted job class" do
-    Resque.push('restriction_othernormal', :class => 'OneHourRestrictionJob', :args => ['any args'])
-    Resque::Job.reserve('restriction_othernormal').should == Resque::Job.new('restriction_othernormal', {'class' => 'OneHourRestrictionJob', 'args' => ['any args']})
-    OneHourRestrictionJob.source_queue.should == 'restriction_othernormal'
-  end
-
-  it "should set queue on still restricted job class" do
-    Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), -1)
-    Resque.push('restriction_othernormal', :class => 'OneHourRestrictionJob', :args => ['any args'])
-    Resque::Job.reserve('restriction_othernormal').should be_nil
-    OneHourRestrictionJob.source_queue.should == 'restriction_othernormal'
-  end
-
-  it "should set queue on restricted job class" do
-    Resque.push('othernormal', :class => 'OneHourRestrictionJob', :args => ['any args'])
-    Resque::Job.reserve('othernormal').should == Resque::Job.new('othernormal', {'class' => 'OneHourRestrictionJob', 'args' => ['any args']})
-    Resque::Job.reserve('othernormal').should be_nil
-    OneHourRestrictionJob.source_queue.should == 'othernormal'
+  it "should  set queue on restricted job class" do
+    Resque::Job.create(:normal_foo, CheckSourceQueueJob)
+    worker = Resque::Worker.new("*")
+    worker.work(0)
+    Resque.redis.get("source_queue").should == "normal_foo"
+    CheckSourceQueueJob.source_queue.should be_nil
   end
 
   it "should not set queue on plain job class" do
-    Resque.push('normal', :class => 'UnrestrictedJob', :args => ['any args'])
-    UnrestrictedJob.should_not_receive(:queue=)
-    Resque::Job.reserve('normal').should == Resque::Job.new('normal', {'class' => 'UnrestrictedJob', 'args' => ['any args']})
+    Resque::Job.create(:normal_foo, UnrestrictedJob)
+    worker = Resque::Worker.new("*")
+    worker.work(0)
+    Resque.redis.lrange("failed", 0, -1).size.should == 0
   end
+
 
 end
