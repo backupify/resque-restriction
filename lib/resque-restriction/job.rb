@@ -5,10 +5,14 @@ module Resque
       
       def reserve(queue)
         if queue =~ /^#{Plugins::Restriction::RESTRICTION_QUEUE_PREFIX}/
-          # If processing the restriction queue, when poping and pushing to end,
-          # we can't tell when we reach the original one, so just walk the length
-          # of the queue so we don't run infinitely long
-          Resque.size(queue).times do |i|
+          # If processing the restriction queue, when popping and pushing to end,
+          # we can't tell when we reach the original one, so just walk up to N items
+          # of the queue so we don't run infinitely long.
+          # After N items, a worker will give up and try another queue.
+          # This way, in aggregate, all items in a restriction queue will get processed, but
+          # multiple workers won't get tied up while processing a large queue
+          count = [Resque.size(queue), Plugins::Restriction::RESTRICTION_QUEUE_BATCH_SIZE].min
+          count.times do |i|
             # For the job at the head of the queue, repush to restricition queue
             # if still restricted, otherwise we have a runnable job, so create it
             # and return

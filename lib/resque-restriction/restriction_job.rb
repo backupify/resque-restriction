@@ -10,6 +10,7 @@ module Resque
         :per_year => 366*24*60*60
       }
       RESTRICTION_QUEUE_PREFIX = 'restriction'
+      RESTRICTION_QUEUE_BATCH_SIZE = 100
 
       def settings
         @options ||= {}
