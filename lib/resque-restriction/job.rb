@@ -11,18 +11,31 @@ module Resque
           # After N items, a worker will give up and try another queue.
           # This way, in aggregate, all items in a restriction queue will get processed, but
           # multiple workers won't get tied up while processing a large queue
-          count = [Resque.size(queue), Plugins::Restriction::RESTRICTION_QUEUE_BATCH_SIZE].min
-          count.times do |i|
-            # For the job at the head of the queue, repush to restricition queue
-            # if still restricted, otherwise we have a runnable job, so create it
-            # and return
-            payload = Resque.pop(queue)
-            if payload
-              if ! constantize(payload['class']).repush(queue, *payload['args'])
-                return new(queue, payload)
+          begin
+            # prevent too many workers from processing restriction queue - with large queues
+            # and many workers, end up with large memory fragmentation in redis due to all
+            # the popping/pushing
+            Resque.redis.setnx(Plugins::Restriction::SCAN_LIMIT_KEY, Plugins::Restriction::SCAN_LIMIT)
+            limit = Resque.redis.decr(Plugins::Restriction::SCAN_LIMIT_KEY)
+            return nil if limit < 0
+
+            count = [Resque.size(queue), Plugins::Restriction::RESTRICTION_QUEUE_BATCH_SIZE].min
+            count.times do |i|
+              # For the job at the head of the queue, repush to restricition queue
+              # if still restricted, otherwise we have a runnable job, so create it
+              # and return
+              payload = Resque.pop(queue)
+              if payload
+                if ! constantize(payload['class']).repush(queue, *payload['args'])
+                  return new(queue, payload)
+                end
               end
             end
+
+          ensure
+            Resque.redis.incr(Plugins::Restriction::SCAN_LIMIT_KEY)
           end
+
           return nil
         else
           # drop through to original Job::Reserve if not restriction queue

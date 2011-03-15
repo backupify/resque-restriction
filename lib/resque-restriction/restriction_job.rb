@@ -11,6 +11,8 @@ module Resque
       }
       RESTRICTION_QUEUE_PREFIX = 'restriction'
       RESTRICTION_QUEUE_BATCH_SIZE = 100
+      SCAN_LIMIT_KEY = "resque:restriction:scan_limit"
+      SCAN_LIMIT = 100
 
       def settings
         @options ||= {}

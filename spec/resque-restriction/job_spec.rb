@@ -35,7 +35,7 @@ describe Resque::Job do
     Resque::Job.reserve('restriction_normal')
   end
 
-  it "should  set queue on restricted job class" do
+  it "should set queue on restricted job class" do
     Resque::Job.create(:normal_foo, CheckSourceQueueJob)
     worker = Resque::Worker.new("*")
     worker.work(0)
@@ -50,5 +50,12 @@ describe Resque::Job do
     Resque.redis.lrange("failed", 0, -1).size.should == 0
   end
 
+  it "should track scan limit when checking restricted queues" do
+    Resque.push('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
+    Resque.redis.set(Resque::Plugins::Restriction::SCAN_LIMIT_KEY, "0")
+    Resque::Job.reserve('restriction_normal').should be_nil
+    Resque.redis.set(Resque::Plugins::Restriction::SCAN_LIMIT_KEY, "100")
+    Resque::Job.reserve('restriction_normal').should == Resque::Job.new('restriction_normal', {'class' => 'OneHourRestrictionJob', 'args' => ['any args']})
+  end
 
 end
