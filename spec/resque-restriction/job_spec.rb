@@ -52,9 +52,9 @@ describe Resque::Job do
 
   it "should track scan limit when checking restricted queues" do
     Resque.push('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
-    Resque.redis.set(Resque::Plugins::Restriction::SCAN_LIMIT_KEY, "0")
+    Resque.redis.set(Resque::Plugins::Restriction.scan_limit_key, "0")
     Resque::Job.reserve('restriction_normal').should be_nil
-    Resque.redis.set(Resque::Plugins::Restriction::SCAN_LIMIT_KEY, "100")
+    Resque.redis.set(Resque::Plugins::Restriction.scan_limit_key, "100")
     Resque::Job.reserve('restriction_normal').should == Resque::Job.new('restriction_normal', {'class' => 'OneHourRestrictionJob', 'args' => ['any args']})
   end
 
