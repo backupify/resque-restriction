@@ -27,6 +27,14 @@ describe Resque::Plugins::RestrictionJob do
       MultipleRestrictionJob.settings.should == {:per_hour => 10, :per_300 => 2}
       MultiCallRestrictionJob.settings.should == {:per_hour => 10, :per_300 => 2}
     end
+
+    it "should allow getting global config" do
+      Resque::Plugins::Restriction.scan_limit.should == 10
+      Resque::Plugins::Restriction.configure do |config|
+        config.scan_limit = 15
+      end
+      Resque::Plugins::Restriction.scan_limit.should == 15
+    end
   end
   
   context "#restriction_queue_name" do

@@ -4,7 +4,7 @@ module Resque
       alias_method :origin_reserve, :reserve
       
       def reserve(queue)
-        if queue =~ /^#{Plugins::Restriction::RESTRICTION_QUEUE_PREFIX}/
+        if queue =~ /^#{Plugins::Restriction.restriction_queue_prefix}/
           # If processing the restriction queue, when popping and pushing to end,
           # we can't tell when we reach the original one, so just walk up to N items
           # of the queue so we don't run infinitely long.
@@ -15,11 +15,11 @@ module Resque
             # prevent too many workers from processing restriction queue - with large queues
             # and many workers, end up with large memory fragmentation in redis due to all
             # the popping/pushing
-            Resque.redis.setnx(Plugins::Restriction::SCAN_LIMIT_KEY, Plugins::Restriction::SCAN_LIMIT)
-            limit = Resque.redis.decr(Plugins::Restriction::SCAN_LIMIT_KEY)
+            Resque.redis.setnx(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit)
+            limit = Resque.redis.decr(Plugins::Restriction.scan_limit_key)
             return nil if limit < 0
 
-            count = [Resque.size(queue), Plugins::Restriction::RESTRICTION_QUEUE_BATCH_SIZE].min
+            count = [Resque.size(queue), Plugins::Restriction.restriction_queue_batch_size].min
             count.times do |i|
               # For the job at the head of the queue, repush to restricition queue
               # if still restricted, otherwise we have a runnable job, so create it
@@ -33,7 +33,7 @@ module Resque
             end
 
           ensure
-            Resque.redis.incr(Plugins::Restriction::SCAN_LIMIT_KEY)
+            Resque.redis.incr(Plugins::Restriction.scan_limit_key)
           end
 
           return nil

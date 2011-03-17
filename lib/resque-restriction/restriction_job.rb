@@ -1,6 +1,37 @@
 module Resque
   module Plugins
+
+    # To configure resque restriction, add something liker the following to an initializer (defaults show)
+    #
+    #    Resque::Plugins::Restriction.configure do |config|
+    #      # The prefix to append to the queue for its restriction queue
+    #      config.restriction_queue_prefix = 'restriction'
+    #      # how many items to scan in the restriction queue at a time
+    #      config.restriction_queue_batch_size = 100
+    #      # the key to use for concurrency check for restriction scan limit
+    #      config.scan_limit_key = "restriction:scan_limit"
+    #      # How many workers can scan the restriction queue at a time.
+    #      config.scan_limit = 10
+    #    end
+
     module Restriction
+
+      class << self
+        # optional
+        attr_accessor :restriction_queue_prefix, :restriction_queue_batch_size
+        attr_accessor :scan_limit_key, :scan_limit
+      end
+
+      # default values
+      self.restriction_queue_prefix = 'restriction'
+      self.restriction_queue_batch_size = 100
+      self.scan_limit_key = "restriction:scan_limit"
+      self.scan_limit = 10
+
+      def self.configure
+        yield self
+      end
+
       SECONDS = {
         :per_minute => 60,
         :per_hour => 60*60,
@@ -9,10 +40,6 @@ module Resque
         :per_month => 31*24*60*60,
         :per_year => 366*24*60*60
       }
-      RESTRICTION_QUEUE_PREFIX = 'restriction'
-      RESTRICTION_QUEUE_BATCH_SIZE = 100
-      SCAN_LIMIT_KEY = "resque:restriction:scan_limit"
-      SCAN_LIMIT = 100
 
       def settings
         @options ||= {}
@@ -86,7 +113,7 @@ module Resque
 
       def restriction_queue_name(queue)
         queue_name = queue || Resque.queue_from_class(self)
-        queue_name = "#{RESTRICTION_QUEUE_PREFIX}_#{queue_name}" if queue_name !~ /^#{Plugins::Restriction::RESTRICTION_QUEUE_PREFIX}/
+        queue_name = "#{Plugins::Restriction.restriction_queue_prefix}_#{queue_name}" if queue_name !~ /^#{Plugins::Restriction.restriction_queue_prefix}/
         return queue_name
       end
 
