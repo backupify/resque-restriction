@@ -26,7 +26,7 @@ module Resque
       self.restriction_queue_prefix = 'restriction'
       self.restriction_queue_batch_size = 1000
       self.restriction_queue_lock_prefix = 'restriction.lock'
-      self.restriction_queue_lock_timeout = 10
+      self.restriction_queue_lock_timeout = 60
 
       def self.configure
         yield self

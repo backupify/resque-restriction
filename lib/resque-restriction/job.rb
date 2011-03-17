@@ -10,19 +10,22 @@ module Resque
           lock_key = "#{Plugins::Restriction.restriction_queue_lock_prefix}.#{queue}"
 
           # acquire the lock to work on the restriction queue
-          acquired_lock = Resque.redis.setnx(lock_key, Time.now.to_i + lock_timeout + 1)
+          expiration_time = Time.now.to_i + lock_timeout + 1
+          acquired_lock = Resque.redis.setnx(lock_key, expiration_time)
 
           # If we don't acquire the lock, check the expiration as described
           # at http://redis.io/commands/setnx
           if ! acquired_lock
             # If expiration time is in the future, then don't process.  We do process if unset
-            expiration_time = Resque.redis.get(lock_key)
-            return nil if expiration_time.to_i > Time.now.to_i
+            old_expiration_time = Resque.redis.get(lock_key)
+            return nil if old_expiration_time.to_i > Time.now.to_i
 
             # if expiration time was in the future when we set it, then don't
-            # process as someone beat us to it  We do process if unset
-            expiration_time = Resque.redis.getset(lock_key, Time.now.to_i + lock_timeout + 1)
-            return nil if expiration_time.to_i > Time.now.to_i
+            # process as someone beat us to it  We do process if unset.
+            # calculate expiration time again in case things running really slowly
+            expiration_time = Time.now.to_i + lock_timeout + 1
+            old_expiration_time = Resque.redis.getset(lock_key, expiration_time)
+            return nil if old_expiration_time.to_i > Time.now.to_i
           end
 
           begin
@@ -46,9 +49,8 @@ module Resque
             end
 
           ensure
-            # don't delete expired keys as this is a race condition if expired
-            # because it is handled above
-            Resque.redis.del(lock_key) if Resque.redis.get(lock_key).to_i > Time.now.to_i
+            # Only delete the lock if the one we created hasn't expired
+            Resque.redis.del(lock_key) if expiration_time > Time.now.to_i
           end
 
           return nil
