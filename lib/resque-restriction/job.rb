@@ -8,6 +8,7 @@ module Resque
           
           lock_timeout = Plugins::Restriction.restriction_queue_lock_timeout
           lock_key = "#{Plugins::Restriction.restriction_queue_lock_prefix}.#{queue}"
+          position_key = "#{Plugins::Restriction.restriction_queue_lock_prefix}.position.#{queue}"
 
           # acquire the lock to work on the restriction queue
           expiration_time = Time.now.to_i + lock_timeout + 1
@@ -29,22 +30,34 @@ module Resque
           end
 
           begin
-
             redis_queue = "queue:#{queue}"
-            range = Resque.redis.lrange(redis_queue, 0, Plugins::Restriction.restriction_queue_batch_size - 1)
-            range.each_with_index do |queue_entry, i|
-              # For the job at the head of the queue, repush to restricition queue
-              # if still restricted, otherwise we have a runnable job, so create it
-              # and return
-              payload = Resque.decode(queue_entry)
-              if ! constantize(payload['class']).restricted?(queue, *payload['args'])
-                removed = Resque.redis.lrem(redis_queue, 1, queue_entry).to_i
-                if removed == 1
-                  return new(queue, payload)
-                else
-                  return nil
+
+            size = Resque.redis.llen(redis_queue)
+            if size > 0
+              
+              start = Resque.redis.get(position_key).to_i
+              next_start = (start + Plugins::Restriction.restriction_queue_batch_size) % size
+
+              range = Resque.redis.lrange(redis_queue, start, Plugins::Restriction.restriction_queue_batch_size - 1)
+
+              range.each_with_index do |queue_entry, i|
+                # For the job at the head of the queue, repush to restricition queue
+                # if still restricted, otherwise we have a runnable job, so create it
+                # and return
+                payload = Resque.decode(queue_entry)
+                if ! constantize(payload['class']).restricted?(queue, *payload['args'])
+                  removed = Resque.redis.lrem(redis_queue, 1, queue_entry).to_i
+                  if removed == 1
+                    return new(queue, payload)
+                  else
+                    return nil
+                  end
                 end
+
               end
+
+              # only want to set a next start if we don't find anything in current batch
+              Resque.redis.set(position_key, next_start)
 
             end
 
