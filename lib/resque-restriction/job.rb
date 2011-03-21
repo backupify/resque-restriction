@@ -29,6 +29,7 @@ module Resque
             return nil if old_expiration_time.to_i > Time.now.to_i
           end
 
+          next_start = 0
           begin
             redis_queue = "queue:#{queue}"
 
@@ -36,7 +37,7 @@ module Resque
             if size > 0
               
               start = Resque.redis.get(position_key).to_i
-              next_start = (start + Plugins::Restriction.restriction_queue_batch_size) % size
+              start = 0 if start > size || start < 0
 
               range = Resque.redis.lrange(redis_queue, start, Plugins::Restriction.restriction_queue_batch_size - 1)
 
@@ -45,7 +46,10 @@ module Resque
                 # if still restricted, otherwise we have a runnable job, so create it
                 # and return
                 payload = Resque.decode(queue_entry)
+                next_start = start + i + 1
+
                 if ! constantize(payload['class']).restricted?(queue, *payload['args'])
+                  next_start -= 1
                   removed = Resque.redis.lrem(redis_queue, 1, queue_entry).to_i
                   if removed == 1
                     return new(queue, payload)
@@ -56,12 +60,11 @@ module Resque
 
               end
 
-              # only want to set a next start if we don't find anything in current batch
-              Resque.redis.set(position_key, next_start)
-
             end
 
           ensure
+            # always set the next_start to however far through the list we advanced
+            Resque.redis.set(position_key, next_start)
             # Only delete the lock if the one we created hasn't expired
             Resque.redis.del(lock_key) if expiration_time > Time.now.to_i
           end
