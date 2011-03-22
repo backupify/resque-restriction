@@ -37,7 +37,7 @@ module Resque
             if size > 0
               
               start = Resque.redis.get(position_key).to_i
-              start = 0 if start > size || start < 0
+              start = 0 if start >= size || start < 0
 
               range = Resque.redis.lrange(redis_queue, start, Plugins::Restriction.restriction_queue_batch_size - 1)
 
