@@ -27,14 +27,6 @@ describe Resque::Plugins::RestrictionJob do
       MultipleRestrictionJob.settings.should == {:per_hour => 10, :per_300 => 2}
       MultiCallRestrictionJob.settings.should == {:per_hour => 10, :per_300 => 2}
     end
-
-    it "should allow getting global config" do
-      Resque::Plugins::Restriction.restriction_queue_batch_size.should == 1000
-      Resque::Plugins::Restriction.configure do |config|
-        config.restriction_queue_batch_size = 1001
-      end
-      Resque::Plugins::Restriction.restriction_queue_batch_size.should == 1001
-    end
   end
   
   context "#restriction_queue_name" do
@@ -133,12 +125,14 @@ describe Resque::Plugins::RestrictionJob do
     context "repush" do
       it "should push restricted jobs onto restriction queue" do
         Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), -1)
-        OneHourRestrictionJob.restricted?('restriction_normal', 'any args').should be_true
+        Resque.should_receive(:push).once.with('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
+        OneHourRestrictionJob.repush('restriction_normal', 'any args').should be_true
       end
 
       it "should not push unrestricted jobs onto restriction queue" do
         Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 1)
-        OneHourRestrictionJob.restricted?('normal', 'any args').should be_false
+        Resque.should_not_receive(:push)
+        OneHourRestrictionJob.repush('normal', 'any args').should be_false
       end
 
     end
