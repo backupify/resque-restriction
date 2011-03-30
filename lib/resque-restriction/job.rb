@@ -11,13 +11,21 @@ module Resque
           # After N items, a worker will give up and try another queue.
           # This way, in aggregate, all items in a restriction queue will get processed, but
           # multiple workers won't get tied up while processing a large queue
+
+          # prevent too many workers from processing restriction queue as this overloads
+          # redis when we have a large number of workers
+          #
+          # set the scan limit in case its never been set or has expired
+          Resque.redis.setnx(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit)
+          # Decrement the limit so only scan_limit workers check restriction queue concurrently
+          limit = Resque.redis.decr(Plugins::Restriction.scan_limit_key)
+
           begin
-            # prevent too many workers from processing restriction queue - with large queues
-            # and many workers, end up with large memory fragmentation in redis due to all
-            # the popping/pushing
-            Resque.redis.setnx(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit)
-            limit = Resque.redis.decr(Plugins::Restriction.scan_limit_key)
             return nil if limit < 0
+
+            # update expiration only if we were able to get a lock so that it will
+            # expire in the case where all workers are stuck unable to get the lock
+            Resque.redis.expire(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit_expire)
 
             count = [Resque.size(queue), Plugins::Restriction.restriction_queue_batch_size].min
             count.times do |i|
@@ -33,6 +41,7 @@ module Resque
             end
 
           ensure
+            # Always increment as long as decrement succeeded
             Resque.redis.incr(Plugins::Restriction.scan_limit_key)
           end
 

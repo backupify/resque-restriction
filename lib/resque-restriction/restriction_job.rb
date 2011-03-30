@@ -10,6 +10,8 @@ module Resque
     #      config.restriction_queue_batch_size = 100
     #      # the key to use for concurrency check for restriction scan limit
     #      config.scan_limit_key = "restriction:scan_limit"
+    #      # the lifetime of the restriction scan limit key as a failsafe
+    #      config.scan_limit_expire = 10
     #      # How many workers can scan the restriction queue at a time.
     #      config.scan_limit = 10
     #    end
@@ -19,14 +21,15 @@ module Resque
       class << self
         # optional
         attr_accessor :restriction_queue_prefix, :restriction_queue_batch_size
-        attr_accessor :scan_limit_key, :scan_limit
+        attr_accessor :scan_limit_key, :scan_limit_expire, :scan_limit
       end
 
       # default values
       self.restriction_queue_prefix = 'restriction'
       self.restriction_queue_batch_size = 100
       self.scan_limit_key = "restriction:scan_limit"
-      self.scan_limit = 10
+      self.scan_limit_expire = 10
+      self.scan_limit = 5
 
       def self.configure
         yield self
