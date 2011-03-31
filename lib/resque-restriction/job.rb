@@ -17,6 +17,11 @@ module Resque
           #
           # set the scan limit in case its never been set or has expired
           Resque.redis.setnx(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit)
+
+          # check before decrementing
+          limit = Resque.redis.get(Plugins::Restriction.scan_limit_key).to_i
+          return nil if limit < 0
+
           # Decrement the limit so only scan_limit workers check restriction queue concurrently
           limit = Resque.redis.decr(Plugins::Restriction.scan_limit_key)
 
