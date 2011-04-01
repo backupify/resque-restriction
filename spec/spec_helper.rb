@@ -2,9 +2,8 @@ require 'rubygems'
 require 'spec/autorun'
 require 'mocha'
 
-dir = File.dirname(__FILE__)
-$LOAD_PATH.unshift(File.expand_path(File.dirname(__FILE__) + "/../lib"))
-require 'resque-restriction'
+spec_dir = File.dirname(File.expand_path(__FILE__))
+$LOAD_PATH << File.expand_path("#{spec_dir}/../lib")
 
 #
 # make sure we can run redis
@@ -16,36 +15,60 @@ if !system("which redis-server")
   abort ''
 end
 
-
 #
 # start our own redis when the tests start,
 # kill it when they end
 #
-
-at_exit do
-  next if $!
-
-  exit_code = Spec::Runner.run
-
-  pid = `ps -e -o pid,command | grep [r]edis-test`.split(" ")[0]
-  puts "Killing test redis server [#{pid}]..."
-  `rm -f #{dir}/dump.rdb`
-  Process.kill("KILL", pid.to_i)
-  exit exit_code
-end
+REDIS_CMD = "redis-server #{spec_dir}/redis-test.conf"
 
 puts "Starting redis for testing at localhost:9736..."
-`redis-server #{dir}/redis-test.conf`
+puts `cd #{spec_dir}; #{REDIS_CMD}`
+
+require 'resque'
 Resque.redis = 'localhost:9736'
+require 'resque-restriction'
+
+# Schedule the redis server for shutdown when tests are all finished.
+at_exit do
+  pid = File.read("#{spec_dir}/redis.pid").to_i rescue nil
+  system ("kill -9 #{pid}") if pid != 0
+  File.delete("#{spec_dir}/redis.pid") rescue nil
+  File.delete("#{spec_dir}/redis-server.log") rescue nil
+  File.delete("#{spec_dir}/dump.rdb") rescue nil
+end
+
 
 ##
 # Helper to perform job classes
 #
 module PerformJob
-  def perform_job(klass, *args)
-    resque_job = Resque::Job.new(Resque.queue_from_class(klass), 'class' => klass, 'args' => args)
-    resque_job.perform
+
+  def run_resque_job(job_class, *job_args)
+    opts = job_args.last.is_a?(Hash) ? job_args.pop : {}
+    queue = opts[:queue] || Resque.queue_from_class(job_class)
+
+    Resque::Job.create(queue, job_class, *job_args)
+
+    run_resque_queue(queue, opts)
   end
+
+  def run_resque_queue(queue, opts={})
+    worker = Resque::Worker.new(queue)
+    worker.very_verbose = true if opts[:verbose]
+
+    if opts[:fork]
+      # do a single job then shutdown
+      def worker.done_working
+        super
+        shutdown
+      end
+      worker.work(0.01)
+    else
+      job = worker.reserve
+      worker.perform(job)
+    end
+  end
+
 end
 
 class OneDayRestrictionJob < Resque::Plugins::RestrictionJob

@@ -6,14 +6,10 @@ module Resque
     #    Resque::Plugins::Restriction.configure do |config|
     #      # The prefix to append to the queue for its restriction queue
     #      config.restriction_queue_prefix = 'restriction'
-    #      # how many items to scan in the restriction queue at a time
+    #      # how many items to scan in the restriction queue at a time - should be large when you have few workers
     #      config.restriction_queue_batch_size = 100
-    #      # the key to use for concurrency check for restriction scan limit
-    #      config.scan_limit_key = "restriction:scan_limit"
-    #      # the lifetime of the restriction scan limit key as a failsafe
-    #      config.scan_limit_expire = 10
-    #      # How many workers can scan the restriction queue at a time.
-    #      config.scan_limit = 10
+    #      # how long before expiring concurrent keys - should be larger than your longest running job
+    #      config.concurrent_key_expire = 60*60*3
     #    end
 
     module Restriction
@@ -21,15 +17,13 @@ module Resque
       class << self
         # optional
         attr_accessor :restriction_queue_prefix, :restriction_queue_batch_size
-        attr_accessor :scan_limit_key, :scan_limit_expire, :scan_limit
+        attr_accessor :concurrent_key_expire
       end
 
       # default values
       self.restriction_queue_prefix = 'restriction'
-      self.restriction_queue_batch_size = 100
-      self.scan_limit_key = "restriction:scan_limit"
-      self.scan_limit_expire = 10
-      self.scan_limit = 5
+      self.restriction_queue_batch_size = 1
+      self.concurrent_key_expire = 60*60*3
 
       def self.configure
         yield self
@@ -60,46 +54,6 @@ module Resque
         settings.merge!(options)
       end
 
-      def before_perform_restriction(*args)
-        keys_decremented = []
-        settings.each do |period, number|
-          key = redis_key(period, *args)
-
-          # first try to set period key to be the total allowed for the period
-          # if we get a 0 result back, the key wasn't set, so we know we are
-          # already tracking the count for that period'
-          period_active = ! Resque.redis.setnx(key, number.to_i - 1)
-
-          # If we are already tracking that period, then decrement by one to
-          # see if we are allowed to run, pushing to restriction queue to run
-          # later if not.  Note that the value stored is the number of outstanding
-          # jobs allowed, thus we need to reincrement if the decr discovers that
-          # we have bypassed the limit
-          if period_active
-            value = Resque.redis.decrby(key, 1).to_i
-            keys_decremented << key
-            if value < 0
-              # reincrement the keys if one of the periods triggers DontPerform so
-              # that we accurately track capacity
-              keys_decremented.each {|k| Resque.redis.incrby(k, 1) }
-              Resque.push restriction_queue_name(source_queue), :class => to_s, :args => args
-              raise Resque::Job::DontPerform
-            end
-          end
-        end
-      end
-
-      def after_perform_restriction(*args)
-        if settings[:concurrent]
-          key = redis_key(:concurrent, *args)
-          Resque.redis.incrby(key, 1)
-        end
-      end
-
-      def on_failure_restriction(ex, *args)
-        after_perform_restriction(*args)
-      end
-
       def redis_key(period, *args)
         period_str = case period
                      when :concurrent then "*"
@@ -120,31 +74,59 @@ module Resque
         return queue_name
       end
 
-      def seconds(period)
+      def key_expiration(period)
+        expiration = nil
+
         if SECONDS.keys.include? period
-          SECONDS[period]
+          expiration = SECONDS[period]
+        elsif period.to_s =~ /^per_(\d+)$/
+           expiration = $1.to_i
         else
-          period.to_s =~ /^per_(\d+)$/ and $1
+          expiration = Plugins::Restriction.concurrent_key_expire
         end
+
+        return expiration
       end
 
-      # if job is still restricted, push back to restriction queue, otherwise push
-      # to real queue.  Since the restrictions will be checked again when run from
-      # real queue, job will just get pushed back onto restriction queue then if
-      # restriction conditions have changed
-      def repush(queue, *args)
+      # Tells us if the job is restricted for the given job args
+      #
+      def restricted?(*args)
         has_restrictions = false
+        keys_incremented = []
+
         settings.each do |period, number|
           key = redis_key(period, *args)
-          value = Resque.redis.get(key)
-          has_restrictions = value && value != "" && value.to_i <= 0
-          break if has_restrictions
+
+          # increment by one to see if we are allowed to run
+          value = Resque.redis.incr(key)
+          keys_incremented << key
+
+          expire = key_expiration(period)
+          Resque.redis.expire(key, expire)
+
+          has_restrictions |= (value > number)
         end
-        if has_restrictions
-          Resque.push restriction_queue_name(queue), :class => to_s, :args => args
-          return true
-        else
-          return false
+
+        # reset the keys if we were restricted so we release the locks
+        # otherwise we are runnable, so keep the locks till after we run
+        keys_incremented.each {|k| Resque.redis.decr(k) } if has_restrictions
+
+        return has_restrictions
+      end
+
+      def push_to_restriction_queue(*args)
+        Resque.push(restriction_queue_name(source_queue), :class => to_s, :args => args)
+      end
+
+      def release_restriction(*args)
+        # All periods but concurrent use a key based on their period
+        # for tracking counts, so when the period is up they move on
+        # to a new key.  Concurrent period is the exception since there
+        # is no time period associated with it, so we have to explicitly
+        # decrement the count after a job has run
+        if settings[:concurrent]
+          key = redis_key(:concurrent, *args)
+          Resque.redis.decr(key)
         end
       end
 

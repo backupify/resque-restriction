@@ -1,73 +1,58 @@
 module Resque
   class Job
-    class <<self
+
+    class << self
+
       alias_method :origin_reserve, :reserve
-      
+
+      # Wrap reserve so we can move a job to restriction queue if it is restricted
+      # This needs to be a class method
       def reserve(queue)
-        if queue =~ /^#{Plugins::Restriction.restriction_queue_prefix}/
-          # If processing the restriction queue, when popping and pushing to end,
-          # we can't tell when we reach the original one, so just walk up to N items
-          # of the queue so we don't run infinitely long.
-          # After N items, a worker will give up and try another queue.
-          # This way, in aggregate, all items in a restriction queue will get processed, but
-          # multiple workers won't get tied up while processing a large queue
+        queue_size = Resque.size(queue)
+        resque_job = origin_reserve(queue)
+        return nil unless resque_job
 
-          # prevent too many workers from processing restriction queue as this overloads
-          # redis when we have a large number of workers
-          #
-          # set the scan limit in case its never been set or has expired
-          Resque.redis.setnx(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit)
+        job_class = resque_job.payload_class
+        job_args = resque_job.args
 
-          # check before decrementing
-          limit = Resque.redis.get(Plugins::Restriction.scan_limit_key).to_i
-          return nil if limit < 0
+        # drop through to original Job::Reserve if not restriction queue
+        return resque_job unless job_class.is_a?(Plugins::Restriction)
 
-          # Decrement the limit so only scan_limit workers check restriction queue concurrently
-          limit = Resque.redis.decr(Plugins::Restriction.scan_limit_key)
+        # Try N times to get a unrestricted job from the queue
+        count = [queue_size, Plugins::Restriction.restriction_queue_batch_size].min
+        count.times do |i|
 
-          begin
-            return nil if limit < 0
-
-            # update expiration only if we were able to get a lock so that it will
-            # expire in the case where all workers are stuck unable to get the lock
-            Resque.redis.expire(Plugins::Restriction.scan_limit_key, Plugins::Restriction.scan_limit_expire)
-
-            count = [Resque.size(queue), Plugins::Restriction.restriction_queue_batch_size].min
-            count.times do |i|
-              # For the job at the head of the queue, repush to restricition queue
-              # if still restricted, otherwise we have a runnable job, so create it
-              # and return
-              payload = Resque.pop(queue)
-              if payload
-                if ! constantize(payload['class']).repush(queue, *payload['args'])
-                  return new(queue, payload)
-                end
-              end
-            end
-
-          ensure
-            # Always increment as long as decrement succeeded
-            Resque.redis.incr(Plugins::Restriction.scan_limit_key)
+          # Return nil to move on to next queue if job is restricted, otherwise
+          # return the job to be performed
+          if job_class.restricted?(*job_args)
+            job_class.push_to_restriction_queue(*job_args)
+          else
+            return resque_job
           end
 
-          return nil
-        else
-          # drop through to original Job::Reserve if not restriction queue
-          origin_reserve(queue)
         end
+
+        return nil
       end
 
     end
 
     alias_method :origin_perform, :perform
 
+    # Wrap perform so we can track the source queue as well as clear
+    # restriction locks after running.
+    # This needs to be a instance method
     def perform
       # This lets job classes that use resque-restriction know what queue the job
       # was taken off of, so that it can be pushed to a restriction variant of that
       # queue when restricted.  Fixes the problem where a job needs to be queued to a queue
       # that is not the same as the one declared in the class
       payload_class.source_queue = queue if payload_class.respond_to?(:source_queue=)
-      origin_perform
+      begin
+        return origin_perform
+      ensure
+        payload_class.release_restriction(args) if payload_class.is_a?(Plugins::Restriction)
+      end
     end
 
   end

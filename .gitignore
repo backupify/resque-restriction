@@ -1,4 +1,6 @@
 spec/dump.rdb
+spec/redis-server.log
+spec/redis.pid
 pkg/**
 .idea
 .rvmrc

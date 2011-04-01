@@ -29,11 +29,11 @@ describe Resque::Plugins::RestrictionJob do
     end
 
     it "should allow getting global config" do
-      Resque::Plugins::Restriction.scan_limit.should == 5
+      Resque::Plugins::Restriction.restriction_queue_batch_size.should == 1
       Resque::Plugins::Restriction.configure do |config|
-        config.scan_limit = 15
+        config.restriction_queue_batch_size = 15
       end
-      Resque::Plugins::Restriction.scan_limit.should == 15
+      Resque::Plugins::Restriction.restriction_queue_batch_size.should == 15
     end
   end
   
@@ -51,6 +51,7 @@ describe Resque::Plugins::RestrictionJob do
     end
 
   end
+
   context "resque" do
     include PerformJob
 
@@ -58,91 +59,74 @@ describe Resque::Plugins::RestrictionJob do
       Resque.redis.flushall
     end
     
-    it "should set execution number and decrement it when one job first executed" do
-      result = perform_job(OneHourRestrictionJob, "any args")
-      result.should be_true
-      Resque.redis.get(OneHourRestrictionJob.redis_key(:per_hour)).should == "9"
+    it "should set execution number and increment it when one job first executed" do
+      run_resque_job(OneHourRestrictionJob, "any args")
+      Resque.redis.get(OneHourRestrictionJob.redis_key(:per_hour)).should == "1"
+      Resque.size(:normal).should == 0
+      Resque.size(:restriction_normal).should == 0
     end
+
+    it "should set expire on key job executed" do
+      run_resque_job(ConcurrentRestrictionJob, "any args")
+      Resque.redis.ttl(ConcurrentRestrictionJob.redis_key(:concurrent)).should == Resque::Plugins::Restriction.concurrent_key_expire
+
+      run_resque_job(OneHourRestrictionJob, "any args")
+      Resque.redis.ttl(OneHourRestrictionJob.redis_key(:per_hour)).should == 60*60
+
+      run_resque_job(OneDayRestrictionJob, "any args")
+      Resque.redis.ttl(OneDayRestrictionJob.redis_key(:per_day)).should == 60*60*24
+    end
+
 
     it "should use restriction_identifier to set exclusive execution counts" do
-      result = perform_job(IdentifiedRestrictionJob, 1)
-      result.should be_true
-      result = perform_job(IdentifiedRestrictionJob, 1)
-      result.should be_true
-      result = perform_job(IdentifiedRestrictionJob, 2)
-      result.should be_true
-      Resque.redis.get(IdentifiedRestrictionJob.redis_key(:per_hour, 1)).should == "8"
-      Resque.redis.get(IdentifiedRestrictionJob.redis_key(:per_hour, 2)).should == "9"
+      run_resque_job(IdentifiedRestrictionJob, 1)
+      run_resque_job(IdentifiedRestrictionJob, 1)
+      run_resque_job(IdentifiedRestrictionJob, 2)
+      Resque.redis.get(IdentifiedRestrictionJob.redis_key(:per_hour, 1)).should == "2"
+      Resque.redis.get(IdentifiedRestrictionJob.redis_key(:per_hour, 2)).should == "1"
     end
 
-    it "should decrement execution number when one job executed" do
+    it "should increment execution number when one job executed" do
       Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 6)
-      result = perform_job(OneHourRestrictionJob, "any args")
-      result.should be_true
-      Resque.redis.get(OneHourRestrictionJob.redis_key(:per_hour)).should == "5"
+      run_resque_job(OneHourRestrictionJob, "any args")
+      Resque.redis.get(OneHourRestrictionJob.redis_key(:per_hour)).should == "7"
     end
 
-    it "should increment execution number when concurrent job completes" do
+    it "should decrement execution number when concurrent job completes" do
       t = Thread.new do
-        result = perform_job(ConcurrentRestrictionJob, "any args")
-        result.should be_true
+        run_resque_job(ConcurrentRestrictionJob, "any args")
       end
       sleep 0.1
-      Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "0"
+      Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "1"
       t.join
-      Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "1"
+      Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "0"
     end
 
-    it "should increment execution number when concurrent job fails" do
+    it "should decrement execution number when concurrent job fails" do
       ConcurrentRestrictionJob.should_receive(:perform).and_raise("bad")
-      perform_job(ConcurrentRestrictionJob, "any args") rescue nil
-      Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "1"
+      run_resque_job(ConcurrentRestrictionJob, "any args")
+      Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "0"
     end
 
-    it "should put the job into restriction queue when execution count < 0" do
-      Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 0)
-      result = perform_job(OneHourRestrictionJob, "any args")
-      result.should_not be_true
-      Resque.redis.get(OneHourRestrictionJob.redis_key(:per_hour)).should == "0"
-      Resque.redis.lrange("queue:restriction_normal", 0, -1).should == [Resque.encode(:class => "OneHourRestrictionJob", :args => ["any args"])]
+    it "should put the job into restriction queue when execution count above limit" do
+      Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 99)
+      run_resque_job(OneHourRestrictionJob, "any args", :queue => 'normal')
+      Resque.redis.get(OneHourRestrictionJob.redis_key(:per_hour)).should == "99"
+      Resque.size(:normal).should == 0
+      Resque.size(:restriction_normal).should == 1
+      Resque.pop("restriction_normal").should == {"class" => "OneHourRestrictionJob", "args" => ["any args"]}
     end
 
-    context "multiple restrict" do
-      it "should restrict per_minute" do
-        result = perform_job(MultipleRestrictionJob, "any args")
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_hour)).should == "9"
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_300)).should == "1"
-        result = perform_job(MultipleRestrictionJob, "any args")
-        result = perform_job(MultipleRestrictionJob, "any args")
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_hour)).should == "8"
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_300)).should == "0"
-      end
-
-      it "should restrict per_hour" do
-        Resque.redis.set(MultipleRestrictionJob.redis_key(:per_hour), 1)
-        Resque.redis.set(MultipleRestrictionJob.redis_key(:per_300), 2)
-        result = perform_job(MultipleRestrictionJob, "any args")
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_hour)).should == "0"
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_300)).should == "1"
-        result = perform_job(MultipleRestrictionJob, "any args")
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_hour)).should == "0"
-        Resque.redis.get(MultipleRestrictionJob.redis_key(:per_300)).should == "1"
-      end
-    end
-
-    context "repush" do
-      it "should push restricted jobs onto restriction queue" do
-        Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), -1)
-        Resque.should_receive(:push).once.with('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
-        OneHourRestrictionJob.repush('restriction_normal', 'any args').should be_true
-      end
-
-      it "should not push unrestricted jobs onto restriction queue" do
-        Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 1)
-        Resque.should_not_receive(:push)
-        OneHourRestrictionJob.repush('normal', 'any args').should be_false
-      end
-
+    it "should stop running after first restriction is met" do
+      run_resque_job(MultipleRestrictionJob, "any args")
+      Resque.redis.get(MultipleRestrictionJob.redis_key(:per_hour)).should == "1"
+      Resque.redis.get(MultipleRestrictionJob.redis_key(:per_300)).should == "1"
+      run_resque_job(MultipleRestrictionJob, "any args")
+      Resque.size(:restriction_normal).should == 0
+      run_resque_job(MultipleRestrictionJob, "any args")
+      Resque.size(:restriction_normal).should == 1
+      Resque.redis.get(MultipleRestrictionJob.redis_key(:per_hour)).should == "2"
+      Resque.redis.get(MultipleRestrictionJob.redis_key(:per_300)).should == "2"
     end
 
   end
