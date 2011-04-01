@@ -7,7 +7,7 @@ module Resque
     #      # The prefix to append to the queue for its restriction queue
     #      config.restriction_queue_prefix = 'restriction'
     #      # how many items to scan in the restriction queue at a time - should be large when you have few workers
-    #      config.restriction_queue_batch_size = 100
+    #      config.restriction_queue_batch_size = 1
     #      # how long before expiring concurrent keys - should be larger than your longest running job
     #      config.concurrent_key_expire = 60*60*3
     #    end
