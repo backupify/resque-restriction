@@ -27,13 +27,28 @@ describe Resque::Job do
     Resque::Job.reserve('restriction_normal').should be_nil
   end
 
+  it "should push batch_size times to restriction queue from normal" do
+    Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 10)
+    Resque::Plugins::Restriction.stub!(:restriction_queue_batch_size).and_return(3)
+    [1, 2, 3, 4].each {|i| Resque.push('normal', :class => 'OneHourRestrictionJob', :args => [i]) }
+    Resque.size('normal').should == 4
+    Resque.size('restriction_normal').should == 0
+    Resque::Job.reserve('normal')
+    Resque.size('normal').should == 1
+    Resque.size('restriction_normal').should == 3
+    [4].each {|i| Resque.pop('normal').should == {'class' => 'OneHourRestrictionJob', 'args' => [i]} }
+    [1, 2, 3].each {|i| Resque.pop('restriction_normal').should == {'class' => 'OneHourRestrictionJob', 'args' => [i]} }
+  end
+
   it "should push back batch_size times to restriction queue" do
     Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 10)
     Resque::Plugins::Restriction.stub!(:restriction_queue_batch_size).and_return(3)
-    4.times { Resque.push('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args']) }
+    [1, 2, 3, 4].each {|i| Resque.push('restriction_normal', :class => 'OneHourRestrictionJob', :args => [i]) }
+    Resque.size('normal').should == 0
     Resque.size('restriction_normal').should == 4
-    OneHourRestrictionJob.should_receive(:push_to_restriction_queue).exactly(3).times
     Resque::Job.reserve('restriction_normal')
+    Resque.size('restriction_normal').should == 4
+    [4, 1, 2, 3].each {|i| Resque.pop('restriction_normal').should == {'class' => 'OneHourRestrictionJob', 'args' => [i]} }
   end
 
   it "should only push back queue length times to restriction queue" do
@@ -58,6 +73,22 @@ describe Resque::Job do
     worker = Resque::Worker.new("*")
     worker.work(0)
     Resque.redis.lrange("failed", 0, -1).size.should == 0
+  end
+
+  it "should not restrict plain job class" do
+    Resque.push('normal', :class => 'UnrestrictedJob', :args => [1])
+    UnrestrictedJob.expects(:restricted?).never
+    Resque::Job.reserve('normal').should == Resque::Job.new('normal', {'class' => 'UnrestrictedJob', 'args' => [1]})
+    Resque.size('restriction_normal').should == 0
+    Resque.size('normal').should == 0
+  end
+
+  it "should not fail on empty queue" do
+    Resque.size('restriction_normal').should == 0
+    Resque.size('normal').should == 0
+    Resque::Job.reserve('normal').should == nil
+    Resque.size('restriction_normal').should == 0
+    Resque.size('normal').should == 0
   end
 
 end

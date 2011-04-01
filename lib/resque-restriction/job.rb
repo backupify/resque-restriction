@@ -9,18 +9,20 @@ module Resque
       # This needs to be a class method
       def reserve(queue)
         queue_size = Resque.size(queue)
-        resque_job = origin_reserve(queue)
-        return nil unless resque_job
 
-        job_class = resque_job.payload_class
-        job_args = resque_job.args
-
-        # drop through to original Job::Reserve if not restriction queue
-        return resque_job unless job_class.is_a?(Plugins::Restriction)
-
-        # Try N times to get a unrestricted job from the queue
+        # Try up to N times to get a unrestricted job from the queue
         count = [queue_size, Plugins::Restriction.restriction_queue_batch_size].min
         count.times do |i|
+
+          resque_job = origin_reserve(queue)
+          return nil unless resque_job
+
+          job_class = resque_job.payload_class
+          job_args = resque_job.args
+
+          # drop through to original Job::Reserve if not restriction queue
+          return resque_job unless job_class.is_a?(Plugins::Restriction)
+
 
           # Return nil to move on to next queue if job is restricted, otherwise
           # return the job to be performed
