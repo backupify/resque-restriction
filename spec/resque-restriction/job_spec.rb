@@ -1,6 +1,8 @@
 require File.expand_path('../../spec_helper', __FILE__)
 
 describe Resque::Job do
+  include PerformJob
+
   before(:each) do
     Resque.redis.flushall
   end
@@ -60,15 +62,17 @@ describe Resque::Job do
     Resque::Job.reserve('restriction_normal')
   end
 
-  it "should set queue on restricted job class" do
-    Resque::Job.create(:normal_foo, CheckSourceQueueJob)
-    worker = Resque::Worker.new("*")
-    worker.work(0)
-    Resque.redis.get("source_queue").should == "normal_foo"
-    CheckSourceQueueJob.source_queue.should be_nil
+
+  it "should move restricted job to queue based on source queue" do
+    Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 99)
+    run_resque_job(OneHourRestrictionJob, "any args", :queue => "foo_queue")
+    Resque.size('foo_queue').should == 0
+    Resque.size('normal').should == 0
+    Resque.size('restriction_normal').should == 0
+    Resque.size('restriction_foo_queue').should == 1
   end
 
-  it "should not set queue on plain job class" do
+  it "should not fail for plain job class" do
     Resque::Job.create(:normal_foo, UnrestrictedJob)
     worker = Resque::Worker.new("*")
     worker.work(0)

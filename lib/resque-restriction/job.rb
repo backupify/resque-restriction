@@ -23,11 +23,10 @@ module Resque
           # drop through to original Job::Reserve if not restriction queue
           return resque_job unless job_class.is_a?(Plugins::Restriction)
 
-
           # Return nil to move on to next queue if job is restricted, otherwise
           # return the job to be performed
           if job_class.restricted?(*job_args)
-            job_class.push_to_restriction_queue(*job_args)
+            job_class.push_to_restriction_queue(queue, *job_args)
           else
             return resque_job
           end
@@ -41,15 +40,9 @@ module Resque
 
     alias_method :origin_perform, :perform
 
-    # Wrap perform so we can track the source queue as well as clear
-    # restriction locks after running.
+    # Wrap perform so we can clear restriction locks after running.
     # This needs to be a instance method
     def perform
-      # This lets job classes that use resque-restriction know what queue the job
-      # was taken off of, so that it can be pushed to a restriction variant of that
-      # queue when restricted.  Fixes the problem where a job needs to be queued to a queue
-      # that is not the same as the one declared in the class
-      payload_class.source_queue = queue if payload_class.respond_to?(:source_queue=)
       begin
         return origin_perform
       ensure

@@ -42,14 +42,6 @@ module Resque
         @options ||= {}
       end
 
-      def source_queue=(queue_name)
-        @source_queue = queue_name
-      end
-
-      def source_queue
-        @source_queue
-      end
-
       def restrict(options={})
         settings.merge!(options)
       end
@@ -114,7 +106,7 @@ module Resque
         return has_restrictions
       end
 
-      def push_to_restriction_queue(*args)
+      def push_to_restriction_queue(source_queue, *args)
         Resque.push(restriction_queue_name(source_queue), :class => to_s, :args => args)
       end
 

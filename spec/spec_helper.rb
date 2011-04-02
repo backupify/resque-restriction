@@ -131,16 +131,6 @@ class MultiCallRestrictionJob < Resque::Plugins::RestrictionJob
   end
 end
 
-class CheckSourceQueueJob < Resque::Plugins::RestrictionJob
-  restrict :per_hour => 10
-
-  @queue = 'normal'
-
-  def self.perform(*args)
-    Resque.redis.set("source_queue", source_queue)
-  end
-end
-
 class UnrestrictedJob
   @queue = 'normal'
 
