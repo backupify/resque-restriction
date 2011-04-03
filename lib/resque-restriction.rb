@@ -1,6 +1,9 @@
 require 'resque'
-require 'resque-restriction/job'
+require 'resque-restriction/restriction_extensions'
 require 'resque-restriction/restriction_job'
+
+Resque::Job.send(:extend, Resque::Plugins::Restriction::Job)
+Resque::Worker.send(:include, Resque::Plugins::Restriction::Worker)
 
 unsupported_version = false
 begin

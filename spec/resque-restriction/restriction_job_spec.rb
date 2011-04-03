@@ -67,14 +67,23 @@ describe Resque::Plugins::RestrictionJob do
     end
 
     it "should set expire on key job executed" do
-      run_resque_job(ConcurrentRestrictionJob, "any args")
-      Resque.redis.ttl(ConcurrentRestrictionJob.redis_key(:concurrent)).should == Resque::Plugins::Restriction.concurrent_key_expire
+      run_resque_job(ConcurrentRestrictionJob)
+      ttl = Resque.redis.ttl(ConcurrentRestrictionJob.redis_key(:concurrent))
+      actual = Resque::Plugins::Restriction.concurrent_key_expire
+      ttl.should > actual - 2
+      ttl.should <= actual
 
       run_resque_job(OneHourRestrictionJob, "any args")
-      Resque.redis.ttl(OneHourRestrictionJob.redis_key(:per_hour)).should == 60*60
+      ttl = Resque.redis.ttl(OneHourRestrictionJob.redis_key(:per_hour))
+      actual = 60*60
+      ttl.should > actual - 2
+      ttl.should <= actual
 
       run_resque_job(OneDayRestrictionJob, "any args")
-      Resque.redis.ttl(OneDayRestrictionJob.redis_key(:per_day)).should == 60*60*24
+      ttl = Resque.redis.ttl(OneDayRestrictionJob.redis_key(:per_day))
+      actual = 60*60*24
+      ttl.should > actual - 2
+      ttl.should <= actual
     end
 
 
@@ -94,7 +103,7 @@ describe Resque::Plugins::RestrictionJob do
 
     it "should decrement execution number when concurrent job completes" do
       t = Thread.new do
-        run_resque_job(ConcurrentRestrictionJob, "any args")
+        run_resque_job(ConcurrentRestrictionJob)
       end
       sleep 0.1
       Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "1"
@@ -103,8 +112,7 @@ describe Resque::Plugins::RestrictionJob do
     end
 
     it "should decrement execution number when concurrent job fails" do
-      ConcurrentRestrictionJob.should_receive(:perform).and_raise("bad")
-      run_resque_job(ConcurrentRestrictionJob, "any args")
+      run_resque_job(ConcurrentRestrictionJob, "bad", :verbose => true)
       Resque.redis.get(ConcurrentRestrictionJob.redis_key(:concurrent)).should == "0"
     end
 

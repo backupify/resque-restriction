@@ -56,16 +56,11 @@ module PerformJob
     worker = Resque::Worker.new(queue)
     worker.very_verbose = true if opts[:verbose]
 
-    if opts[:fork]
-      # do a single job then shutdown
-      def worker.done_working
-        super
-        shutdown
-      end
-      worker.work(0.01)
-    else
+    if opts[:inline]
       job = worker.reserve
       worker.perform(job)
+    else
+      worker.work(0)
     end
   end
 
@@ -108,6 +103,7 @@ class ConcurrentRestrictionJob < Resque::Plugins::RestrictionJob
   @queue = 'normal'
 
   def self.perform(*args)
+    raise args.first if args.first
     sleep 0.2
   end
 end
