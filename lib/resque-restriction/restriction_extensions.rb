@@ -14,33 +14,67 @@ module Resque
         # Wrap reserve so we can move a job to restriction queue if it is restricted
         # This needs to be a class method
         def reserve_with_restriction(queue)
-          queue_size = Resque.size(queue)
 
-          # Try up to N times to get a unrestricted job from the queue
-          count = [queue_size, Plugins::Restriction.restriction_queue_batch_size].min
-          count.times do |i|
+          limit_restriction_workers(queue) do
 
-            resque_job = reserve_without_restriction(queue)
-            return nil unless resque_job
+            queue_size = Resque.size(queue)
 
-            job_class = resque_job.payload_class
-            job_args = resque_job.args
+            # Try up to N times to get a unrestricted job from the queue
+            count = [queue_size, Plugins::Restriction.restriction_queue_batch_size].min
+            count.times do |i|
 
-            # return to work on job if not a restricted job
-            return resque_job unless job_class.is_a?(Plugins::Restriction)
+              resque_job = reserve_without_restriction(queue)
+              return nil unless resque_job
 
-            # Move on to next if job is restricted, otherwise
-            # return the job to be performed
-            if job_class.restricted?(*job_args)
-              job_class.push_to_restriction_queue(queue, *job_args)
-            else
-              return resque_job
+              job_class = resque_job.payload_class
+              job_args = resque_job.args
+
+              # return to work on job if not a restricted job
+              return resque_job unless job_class.is_a?(Plugins::Restriction)
+
+              # Move on to next if job is restricted, otherwise
+              # return the job to be performed
+              if job_class.restricted?(*job_args)
+                job_class.push_to_restriction_queue(queue, *job_args)
+              else
+                return resque_job
+              end
+
             end
+
+            # Return nil to move on to next queue if we couldn't get a job after batch_size tries
+            return nil
 
           end
 
-          # Return nil to move on to next queue if we couldn't get a job after batch_size tries
-          return nil
+        end
+
+        # prevent too many workers from processing restriction queue as this overloads
+        # redis when we have a large number of workers
+        def limit_restriction_workers(queue)
+          return yield unless queue =~ /^#{Plugins::Restriction.restriction_queue_prefix}_/
+
+          key = Plugins::Restriction.scan_limit_key
+          scan_limit = Plugins::Restriction.scan_limit
+
+          # Increment the limit so only scan_limit workers check restriction queue concurrently
+          limit = Resque.redis.incr(key)
+
+          begin
+            
+            return nil if limit > scan_limit
+
+            # update expiration only if we were able to get a lock so that it will
+            # expire in the case where all workers are stuck unable to get the lock
+            Resque.redis.expire(key, Plugins::Restriction.scan_limit_expire)
+
+            return yield
+
+          ensure
+            # Always decrement as long as increment succeeded
+            Resque.redis.decr(key)
+          end
+          
         end
 
       end

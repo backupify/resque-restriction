@@ -62,6 +62,30 @@ describe Resque::Job do
     Resque::Job.reserve('restriction_normal')
   end
 
+  it "should not use scan limit for normal queues" do
+    Resque.push('normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
+    Resque::Job.reserve('normal').should == Resque::Job.new('normal', {'class' => 'OneHourRestrictionJob', 'args' => ['any args']})
+    Resque.redis.get(Resque::Plugins::Restriction.scan_limit_key).should be_nil
+    Resque::Job.reserve('normal').should be_nil
+    Resque::Job.reserve('restriction_normal').should be_nil
+  end
+
+  it "should use scan limit for restriction queue" do
+    Resque.push('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
+    Resque::Job.reserve('restriction_normal').should == Resque::Job.new('restriction_normal', {'class' => 'OneHourRestrictionJob', 'args' => ['any args']})
+    Resque.redis.get(Resque::Plugins::Restriction.scan_limit_key).should == "0"
+    Resque::Job.reserve('normal').should be_nil
+    Resque::Job.reserve('restriction_normal').should be_nil
+  end
+
+  it "should not get a job if scan limit exceeded for restriction queue" do
+    Resque.redis.set(Resque::Plugins::Restriction.scan_limit_key, "999")
+    Resque.push('restriction_normal', :class => 'OneHourRestrictionJob', :args => ['any args'])
+    Resque::Job.reserve('restriction_normal').should be_nil
+    Resque.redis.get(Resque::Plugins::Restriction.scan_limit_key).should == "999"
+    Resque::Job.reserve('normal').should be_nil
+    Resque::Job.reserve('restriction_normal').should be_nil
+  end
 
   it "should move restricted job to queue based on source queue" do
     Resque.redis.set(OneHourRestrictionJob.redis_key(:per_hour), 99)
