@@ -61,8 +61,10 @@ module Resque
           limit = Resque.redis.incr(key)
 
           begin
-            
-            return nil if limit > scan_limit
+
+            # do nothing if our limit is exceeded
+            # also do nothing if its negative as a safety check
+            return nil if limit > scan_limit || limit < 0
 
             # update expiration only if we were able to get a lock so that it will
             # expire in the case where all workers are stuck unable to get the lock
